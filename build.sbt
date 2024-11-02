@@ -48,7 +48,7 @@ lazy val other = (project in file(appDir(otherAppName)))
 lazy val root = (project in file("."))
   .aggregate(core)
   .settings(
-    name := "Shawn",
+    name := "spark-with-scala3",
   )
 
 def appDir(appName: String) = s"apps/$appName"
