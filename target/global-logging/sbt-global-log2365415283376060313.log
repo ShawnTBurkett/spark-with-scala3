@@ -1,9 +1,0 @@
-[0m[[0m[0mdebug[0m] [0m[0m> Exec(assembly, None, None)[0m
-[0m[[0m[0mdebug[0m] [0m[0mEvaluating tasks: assembly[0m
-[0m[[0m[0mdebug[0m] [0m[0mRunning task... Cancel: Signal, check cycles: false, forcegc: true[0m
-[0m[[0m[33mwarn[0m] [0m[0mGetting the hostname Shawns-MacBook-Pro.local was slow (5003.225167 ms). This is likely because the computer's hostname is not set. You can set the hostname with the command: scutil --set HostName "$(scutil --get LocalHostName).local".[0m
-[0m[[0m[0minfo[0m] [0m[0mStrategy 'discard' was applied to a file (Run the task at debug level to see details)[0m
-[0m[[0m[0minfo[0m] [0m[0mStrategy 'rename' was applied to 2 files (Run the task at debug level to see details)[0m
-[0m[[0m[33mwarn[0m] [0m[0mIgnored unknown package option FixedTimestamp(Some(1262304000000))[0m
-[0m[[0m[32msuccess[0m] [0m[0mTotal time: 6 s, completed Oct 27, 2024, 12:17:38 PM[0m
-[0m[[0m[0mdebug[0m] [0m[0m> Exec(idea-shell, None, None)[0m
