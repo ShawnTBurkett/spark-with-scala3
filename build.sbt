@@ -49,6 +49,7 @@ lazy val root = (project in file("."))
   .aggregate(core)
   .settings(
     name := "spark-with-scala3",
+    common,
   )
 
 def appDir(appName: String) = s"apps/$appName"

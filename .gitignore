@@ -2,6 +2,7 @@
 *.class
 *.log
 *~
+.env
 
 # sbt specific
 dist/*
