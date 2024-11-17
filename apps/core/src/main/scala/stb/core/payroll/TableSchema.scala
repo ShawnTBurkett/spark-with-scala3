@@ -4,6 +4,7 @@ import org.apache.spark.sql.*
 import org.apache.spark.sql.catalyst.types.PhysicalDataType
 import org.apache.spark.sql.functions.{col, countDistinct, struct}
 import org.apache.spark.sql.types.DecimalType
+import stb.core.payroll.utils.*
 
 import java.security.InvalidParameterException
 import java.time.LocalDate
@@ -13,20 +14,24 @@ import scala.collection.mutable
 import scala.language.implicitConversions
 import scala.reflect.runtime.universe as ru
 
-final class numeric(val precision: Int, val scale: Int) extends StaticAnnotation
-def uuid: String = java.util.UUID.randomUUID.toString
-def toSnakeCase(str: String): String = {
-  str.zipWithIndex.map{
-    case (s: Char, idx: Int) => if (s.toUpper == s && idx > 0) s"_${s.toLower}" else s.toLower
-  }.mkString
-}
-
-// define schemas
+/**
+ * Trait representing schema of payroll table.
+ */
 sealed trait TableSchema extends Product with Serializable {
+  /**
+   * Scala representation of [[DecimalType]].
+   * @param precision 
+   *    maximum number of digits
+   * @param scale
+   *    maximum number of digits after decimal place
+   */
   case class Numeric(precision: Int, scale: Int)
 
-  implicit def toNumeric(t: (Int, Int)): Numeric = (Numeric.apply _).tupled(t)
+  private implicit def toNumeric(t: (Int, Int)): Numeric = (Numeric.apply _).tupled(t)
 
+  /**
+   * Uses [[numeric numeric]] annotation to determine schema of decimal fields.
+   */
   val decimalTypeCols: Map[String, Numeric] = {
     val mirror: ru.RuntimeMirror = ru.runtimeMirror(this.getClass.getClassLoader)
     val im: ru.InstanceMirror = mirror.reflect(this)
@@ -38,6 +43,9 @@ sealed trait TableSchema extends Product with Serializable {
       .map { case (s, l) => (s.toString, Numeric(l.head, l(1))) }.toMap
   }
 
+  /**
+   * Optional primary key for the tables with this schema, given as [[Option]] type for [[Column]].
+   */
   val primaryKey: Option[Column] = None
 
 }
@@ -59,7 +67,7 @@ case class TimeCardRecords(date: LocalDate,
   override val primaryKey: Option[Column] = Some(col("row_hash"))
 }
 
-case class  ExpenseRecords(off_cycle: Boolean,
+case class ExpenseRecords(off_cycle: Boolean,
                            date_entered: LocalDate,
                            pay_day: LocalDate,
                            date: LocalDate,
