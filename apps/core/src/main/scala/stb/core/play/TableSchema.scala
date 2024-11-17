@@ -1,22 +1,20 @@
 package stb.core.play
 
 import org.apache.spark.sql.catalyst.types.PhysicalDataType
-import org.apache.spark.sql.Encoder
-import org.apache.spark.sql.functions.col
+import org.apache.spark.sql.{Column, DataFrame, Encoder, Encoders, Row, SparkSession}
+import org.apache.spark.sql.functions.{col, countDistinct, struct}
 import org.apache.spark.sql.types.DecimalType
-import org.apache.spark.sql.{Column, DataFrame, Row, SparkSession}
 
+import java.security.InvalidParameterException
 import scala.collection.mutable
 import scala.reflect.runtime.{universe => ru}
 import scala.language.implicitConversions
 import java.time.LocalDate
-
 import scala.annotation.StaticAnnotation
-final class numeric(val precision: Int, val scale: Int) extends StaticAnnotation
 
 import scala.annotation.meta.{field, param}
 
-
+final class numeric(val precision: Int, val scale: Int) extends StaticAnnotation
 def uuid: String = java.util.UUID.randomUUID.toString
 def toSnakeCase(str: String): String = {
   str.zipWithIndex.map{
@@ -29,15 +27,14 @@ import spark.implicits._
 
 // define schemas
 sealed trait TableSchema extends Product with Serializable {
-  val name: String = toSnakeCase(this.getClass.getSimpleName)
-
   case class Numeric(precision: Int, scale: Int)
 
   implicit def toNumeric(t: (Int, Int)): Numeric = (Numeric.apply _).tupled(t)
 
-  val mirror = ru.runtimeMirror(this.getClass.getClassLoader)
-  val im = mirror.reflect(this)
-  val decimalTypeCols = {
+  val decimalTypeCols: Map[String, Numeric] = {
+    val mirror: ru.RuntimeMirror = ru.runtimeMirror(this.getClass.getClassLoader)
+    val im: ru.InstanceMirror = mirror.reflect(this)
+
     im.symbol.primaryConstructor.typeSignature.paramLists.head
       .collect {
         case s if s.annotations.nonEmpty => (s.name, s.annotations.head.tree.children.tail.map(_.toString.toInt))
@@ -45,18 +42,26 @@ sealed trait TableSchema extends Product with Serializable {
       .map { case (s, l) => (s.toString, Numeric(l.head, l(1))) }.toMap
   }
 
+  val primaryKey: Option[Column] = None
+
 }
 
-trait Table[T <: TableSchema : Encoder] {
-  val tableSchema: T
-
-  var _data: mutable.ArrayBuffer[T]
+abstract class Table[T <: TableSchema : ru.TypeTag] {
+  val name: String = toSnakeCase(ru.typeTag[T].tpe.toString)
+  var _data: mutable.ArrayBuffer[T] = mutable.ArrayBuffer[T]()
+  implicit val encoder: Encoder[T] = Encoders.product[T]
   def data: Seq[T] = _data.toSeq
   def addRows(row: T): Unit = _data.append(row)
   def addRows(rows: Seq[T]) = _data.appendAll(rows)
   def asDataFrame(): DataFrame = {
     lazy val df: DataFrame = data.toDF()
-    tableSchema.decimalTypeCols.foldLeft(df){ case (inter, (c, n)) =>
+    data.head.primaryKey match {
+      case Some(col) => if (df.select(countDistinct(col)).head.getLong(0) != df.count()) {
+        throw new RuntimeException("Primary key is not unique; cannot create data frame.")
+      }
+      case None => ()
+    }
+    data.head.decimalTypeCols.foldLeft(df){ case (inter, (c, n)) =>
       inter.withColumn(c, col(c).cast(DecimalType(n.precision, n.scale)))
     }
   }
@@ -64,7 +69,7 @@ trait Table[T <: TableSchema : Encoder] {
     asDataFrame().coalesce(1)
       .write.format("csv")
       .option("header", "true")
-      .save(s"${tableSchema.name}.csv")
+      .save(s"${name}.csv")
   }
 }
 
@@ -81,7 +86,9 @@ case class TimeCardRecords(date: LocalDate,
                            consultant_name: String,
                            description: String,
                            row_hash: String = uuid
-                          ) extends TableSchema
+                          ) extends TableSchema {
+  override val primaryKey: Option[Column] = Some(col("row_hash"))
+}
 
 case class  ExpenseRecords(off_cycle: Boolean,
                            date_entered: LocalDate,
@@ -94,7 +101,9 @@ case class  ExpenseRecords(off_cycle: Boolean,
                            consultant_id: String,
                            program: String,
                            description: String,
-                           row_hash: String = uuid) extends TableSchema
+                           row_hash: String = uuid) extends TableSchema {
+  override val primaryKey: Option[Column] = Some(col("row_hash"))
+}
 
 case class CreditRecords(off_cycle: Boolean,
                          date_entered: LocalDate,
@@ -107,7 +116,9 @@ case class CreditRecords(off_cycle: Boolean,
                          consultant_id: String,
                          program: String,
                          description: String,
-                         row_hash: String = uuid) extends TableSchema
+                         row_hash: String = uuid) extends TableSchema {
+  override val primaryKey: Option[Column] = Some(col("row_hash"))
+}
 
 case class BillingRates(consultant_id: String,
                         client: String,
@@ -170,7 +181,9 @@ case class InvoiceSummary (@numeric(12,2) invoice_total: Double,
                            program: String,
                            po: String,
                            invoice_number: String,
-                           date_billed: LocalDate) extends TableSchema
+                           date_billed: LocalDate) extends TableSchema {
+  override val primaryKey: Option[Column] = Some(col("invoice_number"))
+}
 
 case class FedAndStateWithholding(pay_date: LocalDate,
                                   consultant_id: String,
@@ -206,7 +219,10 @@ case class QuarterlyReports(
                              @numeric(12,2) gross: Double,
                              @numeric(12,2) taxable: Double,
                              @numeric(12,2) federal_deposit: Double,
-                             @numeric(12,2) uitr: Double) extends TableSchema
+                             @numeric(12,2) uitr: Double) extends TableSchema {
+  private val keyCol: Column = struct(col("consultant_id"), col("quarter"), col("year"))
+  override val primaryKey: Option[Column] = Some(keyCol)
+}
 
 // primary key(consultant_id, pay_day)
 case class MonthlyPayrollRecords(consultant_id: String,
@@ -225,7 +241,10 @@ case class MonthlyPayrollRecords(consultant_id: String,
                                  @numeric(12,2) net_pay: Double,
                                  @numeric(12,2) er_fica: Double,
                                  @numeric(12,2) er_medicare: Double,
-                                 @numeric(12,2) total_federal_tax_deposit: Double) extends TableSchema
+                                 @numeric(12,2) total_federal_tax_deposit: Double) extends TableSchema {
+  private val keyCol: Column = struct(col("consultant_id"), col("pay_day"))
+  override val primaryKey: Option[Column] = Some(keyCol)
+}
 
 // primary key(consultant_id, invoice_number)
 case class ConsultantPayRecords(consultant_id: String,
@@ -239,17 +258,24 @@ case class ConsultantPayRecords(consultant_id: String,
                                 @numeric(12,2) expenses: Double,
                                 @numeric(12,2) total_plus_expenses: Double,
                                 date_paid: LocalDate,
-                                check_number: String) extends TableSchema
+                                check_number: String) extends TableSchema {
+  private val keyCol: Column = struct(col("consultant_id"), col("invoice_number"))
+  override val primaryKey: Option[Column] = Some(keyCol)
+}
 
 // date primary key
 case class MonthlySummaries(pay_day: LocalDate,
                             @numeric(12,2) total_federal_tax_deposit: Double,
                             @numeric(12,2) state_wh: Double,
                             date_paid: LocalDate,
-                            check_number: String) extends TableSchema
+                            check_number: String) extends TableSchema {
+  override val primaryKey: Option[Column] = Some(col("date"))
+}
 
 // date primary key
 case class QuarterlySummaries(date: LocalDate,
                               @numeric(12,2) uitr: Double,
                               date_paid: LocalDate,
-                              check_numbe: String)extends TableSchema
+                              check_numbe: String)extends TableSchema {
+  override val primaryKey: Option[Column] = Some(col("date"))
+}
