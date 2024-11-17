@@ -1,18 +1,17 @@
-package stb.core.play
+package stb.core.payroll
 
+import org.apache.spark.sql.*
 import org.apache.spark.sql.catalyst.types.PhysicalDataType
-import org.apache.spark.sql.{Column, DataFrame, Encoder, Encoders, Row, SparkSession}
 import org.apache.spark.sql.functions.{col, countDistinct, struct}
 import org.apache.spark.sql.types.DecimalType
 
 import java.security.InvalidParameterException
-import scala.collection.mutable
-import scala.reflect.runtime.{universe => ru}
-import scala.language.implicitConversions
 import java.time.LocalDate
 import scala.annotation.StaticAnnotation
-
 import scala.annotation.meta.{field, param}
+import scala.collection.mutable
+import scala.language.implicitConversions
+import scala.reflect.runtime.universe as ru
 
 final class numeric(val precision: Int, val scale: Int) extends StaticAnnotation
 def uuid: String = java.util.UUID.randomUUID.toString
@@ -21,9 +20,6 @@ def toSnakeCase(str: String): String = {
     case (s: Char, idx: Int) => if (s.toUpper == s && idx > 0) s"_${s.toLower}" else s.toLower
   }.mkString
 }
-
-implicit val spark: SparkSession = ???
-import spark.implicits._
 
 // define schemas
 sealed trait TableSchema extends Product with Serializable {
@@ -44,33 +40,6 @@ sealed trait TableSchema extends Product with Serializable {
 
   val primaryKey: Option[Column] = None
 
-}
-
-abstract class Table[T <: TableSchema : ru.TypeTag] {
-  val name: String = toSnakeCase(ru.typeTag[T].tpe.toString)
-  var _data: mutable.ArrayBuffer[T] = mutable.ArrayBuffer[T]()
-  implicit val encoder: Encoder[T] = Encoders.product[T]
-  def data: Seq[T] = _data.toSeq
-  def addRows(row: T): Unit = _data.append(row)
-  def addRows(rows: Seq[T]) = _data.appendAll(rows)
-  def asDataFrame(): DataFrame = {
-    lazy val df: DataFrame = data.toDF()
-    data.head.primaryKey match {
-      case Some(col) => if (df.select(countDistinct(col)).head.getLong(0) != df.count()) {
-        throw new RuntimeException("Primary key is not unique; cannot create data frame.")
-      }
-      case None => ()
-    }
-    data.head.decimalTypeCols.foldLeft(df){ case (inter, (c, n)) =>
-      inter.withColumn(c, col(c).cast(DecimalType(n.precision, n.scale)))
-    }
-  }
-  def save(): Unit = {
-    asDataFrame().coalesce(1)
-      .write.format("csv")
-      .option("header", "true")
-      .save(s"${name}.csv")
-  }
 }
 
 case class TimeCardRecords(date: LocalDate,
